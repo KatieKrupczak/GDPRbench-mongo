@@ -1,0 +1,12 @@
+
+sudo service mongodb start
+sudo service mongodb status
+sudo service mongodb stop
+
+
+
+## to build using maven without all the checkstyle violations
+mvn -DskipTests -pl :mongodb-binding -Dcheckstyle.skip=true -am install -e
+
+
+
