@@ -1,4 +1,5 @@
 
+[for wsl1 system that has service instead of systemctl:]
 sudo service mongodb start
 sudo service mongodb status
 sudo service mongodb stop

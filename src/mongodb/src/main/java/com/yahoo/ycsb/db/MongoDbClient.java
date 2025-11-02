@@ -76,12 +76,11 @@ public class MongoDbClient extends DB {
 
   /** GDPR metadata field names. */
   private static String[] fieldnames = {
-    "PUR", "TTL", "USR", "OBJ", "DEC", "ACL", "SHR", "SRC", "CAT", "Data"
+      "PUR", "TTL", "USR", "OBJ", "DEC", "ACL", "SHR", "SRC", "CAT", "Data"
   };
 
   /** The options to use for inserting many documents. */
-  private static final InsertManyOptions INSERT_UNORDERED =
-      new InsertManyOptions().ordered(false);
+  private static final InsertManyOptions INSERT_UNORDERED = new InsertManyOptions().ordered(false);
 
   /** The options to use for inserting a single document. */
   private static final UpdateOptions UPDATE_WITH_UPSERT = new UpdateOptions()
@@ -122,6 +121,11 @@ public class MongoDbClient extends DB {
   /** The bulk inserts pending for the thread. */
   private final List<Document> bulkInserts = new ArrayList<Document>();
 
+  /** Cleanup thread for expired documents */
+  private static Thread cleanupThread;
+  private static volatile boolean cleanupRunning = false;
+  private static int cleanupIntervalSeconds = 60;
+
   /**
    * Cleanup any state for this DB. Called once per DB instance; there is one DB
    * instance per client thread.
@@ -130,6 +134,34 @@ public class MongoDbClient extends DB {
   public final void cleanup() throws DBException {
     if (INIT_COUNT.decrementAndGet() == 0) {
       try {
+        // Stop the background cleanup thread
+        if (cleanupThread != null) {
+          System.out.println("[MongoDB Cleanup] Stopping background thread...");
+          cleanupRunning = false;
+          cleanupThread.interrupt();
+
+          try {
+            cleanupThread.join(5000);
+          } catch (InterruptedException e) {
+            System.err.println("[MongoDB Cleanup] Thread did not stop gracefully");
+          }
+
+          cleanupThread = null;
+        }
+
+        // Run final cleanup before closing connection
+        System.out.println("[MongoDB Cleanup] Running final cleanup...");
+        try {
+          for (String collectionName : database.listCollectionNames()) {
+            if (!collectionName.startsWith("system.") &&
+                !collectionName.equals("audit_log")) {
+              cleanupExpiredDocuments(collectionName);
+            }
+          }
+        } catch (Exception e) {
+          System.err.println("[MongoDB Cleanup] Error during final cleanup: " + e);
+        }
+
         mongoClient.close();
       } catch (Exception e1) {
         System.err.println("Could not close MongoDB connection pool: "
@@ -147,9 +179,9 @@ public class MongoDbClient extends DB {
    * Delete a record from the database.
    *
    * @param table
-   *          The name of the table
+   *              The name of the table
    * @param key
-   *          The record key of the record to delete.
+   *              The record key of the record to delete.
    * @return Zero on success, a non-zero error code on error. See the {@link DB}
    *         class's description for a discussion of error codes.
    */
@@ -159,8 +191,7 @@ public class MongoDbClient extends DB {
       MongoCollection<Document> collection = database.getCollection(table);
 
       Document query = new Document("_id", key);
-      DeleteResult result =
-          collection.withWriteConcern(writeConcern).deleteOne(query);
+      DeleteResult result = collection.withWriteConcern(writeConcern).deleteOne(query);
       if (result.wasAcknowledged() && result.getDeletedCount() == 0) {
         System.err.println("Nothing deleted for key " + key);
         return Status.NOT_FOUND;
@@ -207,20 +238,20 @@ public class MongoDbClient extends DB {
 
       if (!url.startsWith("mongodb://") && !url.startsWith("mongodb+srv://")) {
         System.err.println("ERROR: Invalid URL: '"
-          + url
-          + "'");
+            + url
+            + "'");
         System.err.println("Must be of the form 'mongodb://<host1>:<port1>,"
-          + "<host2>:<port2>/"
-          + "database?options' or 'mongodb+srv://<host>/database?options'.");
+            + "<host2>:<port2>/"
+            + "database?options' or 'mongodb+srv://<host>/database?options'.");
         System.err.println("See http://docs.mongodb.org/manual/"
-          + "reference/connection-string/");
+            + "reference/connection-string/");
         System.exit(1);
       }
 
       try {
         ConnectionString uri = new ConnectionString(url);
         MongoClientSettings.Builder csb = MongoClientSettings.builder()
-        .applyConnectionString(uri);
+            .applyConnectionString(uri);
 
         String uriDb = uri.getDatabase();
         if (!defaultedUrl && (uriDb != null) && !uriDb.isEmpty()
@@ -244,8 +275,16 @@ public class MongoDbClient extends DB {
         if (readPreference == null) {
           readPreference = ReadPreference.primary();
         }
+        // ADD THIS: Get cleanup interval from properties
+        cleanupIntervalSeconds = Integer.parseInt(
+            props.getProperty("mongodb.cleanup.interval", "60"));
 
-        System.out.println("mongo client connection created with " + url);
+        // ADD THIS: Start automatic cleanup thread
+        if (cleanupThread == null) {
+          startCleanupThread();
+        }
+
+        System.out.println("mongo client connection created with " + url + "\n");
       } catch (Exception e1) {
         System.err
             .println("Could not initialize MongoDB connection pool for Loader: "
@@ -257,22 +296,86 @@ public class MongoDbClient extends DB {
   }
 
   /**
+   * Start the background cleanup thread.
+   */
+  private void startCleanupThread() {
+    cleanupRunning = true;
+    cleanupThread = new Thread(() -> {
+      System.out.println("[MongoDB Cleanup] Background thread started, " +
+          "interval: " + cleanupIntervalSeconds + "s");
+
+      while (cleanupRunning) {
+        try {
+          Thread.sleep(cleanupIntervalSeconds * 1000L);
+
+          // Clean all user collections
+          for (String collectionName : database.listCollectionNames()) {
+            if (!collectionName.startsWith("system.") &&
+                !collectionName.equals("audit_log")) {
+              cleanupExpiredDocuments(collectionName);
+            }
+          }
+        } catch (InterruptedException e) {
+          System.out.println("[MongoDB Cleanup] Thread interrupted");
+          break;
+        } catch (Exception e) {
+          System.err.println("[MongoDB Cleanup] Error: " + e);
+        }
+      }
+
+      System.out.println("[MongoDB Cleanup] Background thread stopped");
+    }, "MongoDB-TTL-Cleanup");
+
+    cleanupThread.setDaemon(true);
+    cleanupThread.start();
+  }
+
+  /**
+   * Manually delete all expired documents from a table.
+   * Can be called manually or used by the background cleanup thread.
+   * 
+   * @param table The name of the table to clean up
+   * @return Status.OK on success, Status.ERROR on error
+   */
+  public final Status cleanupExpiredDocuments(final String table) {
+    try {
+      MongoCollection<Document> collection = database.getCollection(table);
+      long currentTimeSeconds = System.currentTimeMillis() / 1000;
+
+      Document query = new Document("expiresAt",
+          new Document("$lte", currentTimeSeconds));
+
+      DeleteResult result = collection.deleteMany(query);
+
+      if (result.getDeletedCount() > 0) {
+        System.out.println("[MongoDB Cleanup] Deleted " + result.getDeletedCount() +
+            " expired documents from " + table);
+      }
+
+      return Status.OK;
+    } catch (Exception e) {
+      System.err.println("[MongoDB Cleanup] Error cleaning " + table + ": " + e);
+      return Status.ERROR;
+    }
+  }
+
+  /**
    * Insert a record in the database. Any field/value pairs in the specified
    * values HashMap will be written into the record with the specified record
    * key.
    *
    * @param table
-   *          The name of the table
+   *               The name of the table
    * @param key
-   *          The record key of the record to insert.
+   *               The record key of the record to insert.
    * @param values
-   *          A HashMap of field/value pairs to insert in the record
+   *               A HashMap of field/value pairs to insert in the record
    * @return Zero on success, a non-zero error code on error. See the {@link DB}
    *         class's description for a discussion of error codes.
    */
   @Override
   public final Status insert(final String table, final String key,
-    final Map<String, ByteIterator> values) {
+      final Map<String, ByteIterator> values) {
     try {
       MongoCollection<Document> collection = database.getCollection(table);
       Document toInsert = new Document("_id", key);
@@ -294,8 +397,7 @@ public class MongoDbClient extends DB {
         bulkInserts.add(toInsert);
         if (bulkInserts.size() == batchSize) {
           if (useUpsert) {
-            List<UpdateOneModel<Document>> updates =
-                new ArrayList<UpdateOneModel<Document>>(bulkInserts.size());
+            List<UpdateOneModel<Document>> updates = new ArrayList<UpdateOneModel<Document>>(bulkInserts.size());
             for (Document doc : bulkInserts) {
               updates.add(new UpdateOneModel<Document>(
                   new Document("_id", doc.get("_id")),
@@ -325,19 +427,19 @@ public class MongoDbClient extends DB {
    * be stored in a HashMap.
    *
    * @param table
-   *          The name of the table
+   *               The name of the table
    * @param key
-   *          The record key of the record to read.
+   *               The record key of the record to read.
    * @param fields
-   *          The list of fields to read, or null for all of them
+   *               The list of fields to read, or null for all of them
    * @param result
-   *          A HashMap of field/value pairs for the result
+   *               A HashMap of field/value pairs for the result
    * @return Zero on success, a non-zero error code on error or "not found".
    */
   @Override
   public final Status read(final String table,
-    final String key, final Set<String> fields,
-    final Map<String, ByteIterator> result) {
+      final String key, final Set<String> fields,
+      final Map<String, ByteIterator> result) {
     try {
       MongoCollection<Document> collection = database.getCollection(table);
       Document query = new Document("_id", key);
@@ -355,6 +457,15 @@ public class MongoDbClient extends DB {
       Document queryResult = findIterable.first();
 
       if (queryResult != null) {
+        if (queryResult.containsKey("expiresAt")) {
+          long expiresAt = queryResult.getLong("expiresAt");
+          long currentTimeSec = System.currentTimeMillis() / 1000;
+
+          if (currentTimeSec >= expiresAt) {
+            // Document is logically expired, even if not yet deleted by TTL monitor
+            return Status.NOT_FOUND;
+          }
+        }
         fillMap(result, queryResult);
       }
       if (queryResult != null) {
@@ -371,30 +482,38 @@ public class MongoDbClient extends DB {
    * Perform a range scan for a set of records in the database. Each field/value
    * pair from the result will be stored in a HashMap.
    *
-   * @param table The name of the table
-   * @param startkey The record key of the first record to read.
+   * @param table       The name of the table
+   * @param startkey    The record key of the first record to read.
    * @param recordcount The number of records to read
-   * @param fields The list of fields to read, or null for all of them
-   * @param result A Vector of HashMaps, where each HashMap is a set field/value
-   *          pairs for one record
+   * @param fields      The list of fields to read, or null for all of them
+   * @param result      A Vector of HashMaps, where each HashMap is a set
+   *                    field/value
+   *                    pairs for one record
    * @return Zero on success, a non-zero error code on error. See the {@link DB}
    *         class's description for a discussion of error codes.
    */
   @Override
   public final Status scan(final String table,
-    final String startkey, final int recordcount,
-    final Set<String> fields,
-    final Vector<HashMap<String, ByteIterator>> result) {
+      final String startkey, final int recordcount,
+      final Set<String> fields,
+      final Vector<HashMap<String, ByteIterator>> result) {
     MongoCursor<Document> cursor = null;
     try {
       MongoCollection<Document> collection = database.getCollection(table);
 
       Document scanRange = new Document("$gte", startkey);
       Document query = new Document("_id", scanRange);
+
+      // Exclude expired documents
+      long currentTimeSeconds = System.currentTimeMillis() / 1000;
+      query.append("$or", java.util.Arrays.asList(
+          new Document("expiresAt", new Document("$exists", false)), // No TTL
+          new Document("expiresAt", new Document("$gt", currentTimeSeconds)) // Not expired
+      ));
+
       Document sort = new Document("_id", INCLUDE);
 
-      FindIterable<Document> findIterable =
-          collection.find(query).sort(sort).limit(recordcount);
+      FindIterable<Document> findIterable = collection.find(query).sort(sort).limit(recordcount);
 
       if (fields != null) {
         Document projection = new Document();
@@ -414,8 +533,7 @@ public class MongoDbClient extends DB {
       result.ensureCapacity(recordcount);
 
       while (cursor.hasNext()) {
-        HashMap<String, ByteIterator> resultMap =
-            new HashMap<String, ByteIterator>();
+        HashMap<String, ByteIterator> resultMap = new HashMap<String, ByteIterator>();
 
         Document obj = cursor.next();
         fillMap(resultMap, obj);
@@ -439,15 +557,15 @@ public class MongoDbClient extends DB {
    * values HashMap will be written into the record with the specified record
    * key, overwriting any existing values with the same field name.
    *
-   * @param table The name of the table
-   * @param key The record key of the record to write.
+   * @param table  The name of the table
+   * @param key    The record key of the record to write.
    * @param values A HashMap of field/value pairs to update in the record
    * @return Zero on success, a non-zero error code on error. See this class's
    *         description for a discussion of error codes.
    */
   @Override
   public final Status update(final String table, final String key,
-    final Map<String, ByteIterator> values) {
+      final Map<String, ByteIterator> values) {
     try {
       MongoCollection<Document> collection = database.getCollection(table);
 
@@ -474,7 +592,7 @@ public class MongoDbClient extends DB {
    * Fills the map with the values from the DBObject.
    *
    * @param resultMap The map to fill
-   * @param obj The object to copy values from.
+   * @param obj       The object to copy values from.
    */
   /**
    * Insert a record with a TTL field. Any field/value pairs in the specified
@@ -483,15 +601,19 @@ public class MongoDbClient extends DB {
    */
   @Override
   public final Status insertTTL(final String table, final String key,
-    final Map<String, ByteIterator> values, final int ttl) {
+      final Map<String, ByteIterator> values, final int ttl) {
     try {
       MongoCollection<Document> collection = database.getCollection(table);
       Document toInsert = new Document("_id", key);
       for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
         toInsert.put(entry.getKey(), entry.getValue().toArray());
       }
-      // Add TTL value
-      toInsert.put("TTL", ttl);
+
+      // FIXED: Add timestamp fields for TTL verification
+      long currentTimeSeconds = System.currentTimeMillis() / 1000;
+      toInsert.put("createdAt", currentTimeSeconds); // When created
+      toInsert.put("TTL", ttl); // TTL duration in seconds
+      toInsert.put("expiresAt", currentTimeSeconds + ttl); // When it expires
 
       if (batchSize == 1) {
         if (useUpsert) {
@@ -504,8 +626,7 @@ public class MongoDbClient extends DB {
         bulkInserts.add(toInsert);
         if (bulkInserts.size() == batchSize) {
           if (useUpsert) {
-            List<UpdateOneModel<Document>> updates =
-                new ArrayList<UpdateOneModel<Document>>(bulkInserts.size());
+            List<UpdateOneModel<Document>> updates = new ArrayList<UpdateOneModel<Document>>(bulkInserts.size());
             for (Document doc : bulkInserts) {
               updates.add(new UpdateOneModel<Document>(
                   new Document("_id", doc.get("_id")),
@@ -530,8 +651,8 @@ public class MongoDbClient extends DB {
 
   @Override
   public final Status readMeta(final String table, final int fieldnum,
-    final String condition, final String keymatch,
-    final Vector<HashMap<String, ByteIterator>> result) {
+      final String condition, final String keymatch,
+      final Vector<HashMap<String, ByteIterator>> result) {
     try {
       MongoCollection<Document> collection = database.getCollection(table);
       Document query = new Document();
@@ -545,8 +666,7 @@ public class MongoDbClient extends DB {
 
       while (cursor.hasNext()) {
         Document obj = cursor.next();
-        HashMap<String, ByteIterator> resultMap
-              = new HashMap<String, ByteIterator>();
+        HashMap<String, ByteIterator> resultMap = new HashMap<String, ByteIterator>();
         fillMap(resultMap, obj);
         result.add(resultMap);
       }
@@ -559,9 +679,9 @@ public class MongoDbClient extends DB {
 
   @Override
   public final Status updateMeta(final String table, final int fieldnum,
-    final String condition,
-    final String keymatch, final String newfieldname,
-    final String newmetadatavalue) {
+      final String condition,
+      final String keymatch, final String newfieldname,
+      final String newmetadatavalue) {
     try {
       MongoCollection<Document> collection = database.getCollection(table);
       Document query = new Document();
@@ -570,10 +690,10 @@ public class MongoDbClient extends DB {
       }
       query.put(fieldnames[fieldnum], condition);
 
-    Document update = new Document("$set",
-      new Document(newfieldname, newmetadatavalue));
+      Document update = new Document("$set",
+          new Document(newfieldname, newmetadatavalue));
 
-  UpdateResult result = collection.updateMany(query, update);
+      UpdateResult result = collection.updateMany(query, update);
       return Status.OK;
     } catch (Exception e) {
       System.err.println(e.toString());
@@ -583,7 +703,7 @@ public class MongoDbClient extends DB {
 
   @Override
   public final Status deleteMeta(final String table, final int fieldnum,
-                              final String condition, final String keymatch) {
+      final String condition, final String keymatch) {
     try {
       MongoCollection<Document> collection = database.getCollection(table);
       Document query = new Document();
@@ -592,20 +712,22 @@ public class MongoDbClient extends DB {
       }
       query.put(fieldnames[fieldnum], condition);
 
-  DeleteResult result = collection.deleteMany(query);
+      DeleteResult result = collection.deleteMany(query);
       return Status.OK;
     } catch (Exception e) {
       System.err.println(e.toString());
       return Status.ERROR;
     }
   }
+
   /**
    * Fills the map with the values from the DBObject.
+   * 
    * @param resultMap The map to fill
-   * @param obj The object to copy values from.
+   * @param obj       The object to copy values from.
    */
   protected final void fillMap(final Map<String, ByteIterator> resultMap,
-                                final Document obj) {
+      final Document obj) {
     for (Map.Entry<String, Object> entry : obj.entrySet()) {
       if (entry.getValue() instanceof Binary) {
         resultMap.put(entry.getKey(),
@@ -616,30 +738,58 @@ public class MongoDbClient extends DB {
 
   /**
    * Verify the TTL for a given document.
-   * @param key The record key of the document to check
+   * 
+   * @param key         The record key of the document to check
    * @param currentTime The current time in milliseconds
-   * @return Status.OK if the document exists and TTL is valid, Status.NOT_FOUND if expired or doesn't exist,
+   * @return Status.OK if the document exists and TTL is valid, Status.NOT_FOUND
+   *         if expired or doesn't exist,
    *         Status.ERROR on error
    */
   @Override
-  public final Status verifyTTL(final String key, final long currentTime) {
+  public final Status verifyTTL(final String table, final long recordcount) {
     try {
-      MongoCollection<Document> collection = database.getCollection(databaseName);
-      Document query = new Document("_id", key)
-          .append("TTL", new Document("$gte", currentTime));
+      MongoCollection<Document> collection = database.getCollection(table);
+      String key = String.valueOf(recordcount);
+      Document query = new Document("_id", key);
       Document result = collection.find(query).first();
-      return result != null ? Status.OK : Status.NOT_FOUND;
+      if (result == null) {
+        return Status.NOT_FOUND;
+      }
+
+      if (result.containsKey("expiresAt")) {
+        long expiresAt = result.getLong("expiresAt");
+        long currentTimeSeconds = System.currentTimeMillis() / 1000; // Convert ms to seconds
+
+        if (currentTimeSeconds >= expiresAt) {
+          return Status.NOT_FOUND; // Document has expired
+        }
+      }
+      return Status.OK;
     } catch (Exception e) {
       System.err.println("Error verifying TTL: " + e.toString());
       return Status.ERROR;
     }
   }
-  
+
   @Override
   public final Status readLog(final String table, final int logCount) {
-    // MongoDB doesn't have a direct AOF log like Redis
-    // Instead, we could check the oplog, but for this implementation we'll just return OK
-    return Status.OK;
-  }
-}
+    // MongoDB doesn't have a direct AOF log like Redis <maybe todo?>
+    // Instead, we could check the oplog, but for this implementation we'll just
+    // return OK
+    try {
+      // For basic implementation, just log the request
+      System.out.println("\n[MongoDB] readLog called for table: " + table +
+          ", requesting " + logCount + " entries");
 
+      // Future: Could read from audit_log collection if implemented
+      // MongoCollection<Document> auditLog = database.getCollection("audit_log");
+      // ... query audit logs ...
+
+      return Status.OK;
+    } catch (Exception e) {
+      System.err.println("\nError in readLog: " + e.toString());
+      return Status.ERROR;
+    }
+  }
+
+}
