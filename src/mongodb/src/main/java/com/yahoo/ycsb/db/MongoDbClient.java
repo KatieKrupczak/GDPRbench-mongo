@@ -275,13 +275,19 @@ public class MongoDbClient extends DB {
         if (readPreference == null) {
           readPreference = ReadPreference.primary();
         }
-        // ADD THIS: Get cleanup interval from properties
+        // Get cleanup interval from properties
         cleanupIntervalSeconds = Integer.parseInt(
             props.getProperty("mongodb.cleanup.interval", "60"));
 
-        // ADD THIS: Start automatic cleanup thread
+        // Start automatic cleanup thread
         if (cleanupThread == null) {
           startCleanupThread();
+        }
+
+        // Get audit log path from properties (for readLog functionality)
+        auditLogPath = props.getProperty("mongodb.auditlog.path", null);
+        if (auditLogPath != null) {
+          System.out.println("Audit log path configured: " + auditLogPath);
         }
 
         System.out.println("mongo client connection created with " + url + "\n");
@@ -771,23 +777,91 @@ public class MongoDbClient extends DB {
     }
   }
 
+  /** Path to the audit log file (configurable via mongodb.auditlog.path property) */
+  private static String auditLogPath;
+
   @Override
   public final Status readLog(final String table, final int logCount) {
-    // MongoDB doesn't have a direct AOF log like Redis <maybe todo?>
-    // Instead, we could check the oplog, but for this implementation we'll just
-    // return OK
     try {
-      // For basic implementation, just log the request
       System.out.println("\n[MongoDB] readLog called for table: " + table +
           ", requesting " + logCount + " entries");
 
-      // Future: Could read from audit_log collection if implemented
-      // MongoCollection<Document> auditLog = database.getCollection("audit_log");
-      // ... query audit logs ...
+      // If audit log path is configured, read from the file
+      if (auditLogPath != null && !auditLogPath.isEmpty()) {
+        java.io.File auditFile = new java.io.File(auditLogPath);
+        if (auditFile.exists() && auditFile.canRead()) {
+          // Force flush to ensure audit log is up to date
+          try {
+            database.runCommand(new Document("fsync", 1));
+          } catch (Exception e) {
+            // fsync may not be available in all configurations
+            System.out.println("[MongoDB] fsync skipped: " + e.getMessage());
+          }
+
+          // Read last N lines from audit log (tail)
+          java.util.List<String> lines = new java.util.ArrayList<>();
+          try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(auditFile, "r")) {
+            long fileLength = raf.length();
+            if (fileLength > 0) {
+              // Start from end and work backwards
+              long pos = fileLength - 1;
+              int lineCount = 0;
+              StringBuilder sb = new StringBuilder();
+
+              while (pos >= 0 && lineCount < logCount) {
+                raf.seek(pos);
+                char c = (char) raf.readByte();
+                if (c == '\n') {
+                  if (sb.length() > 0) {
+                    lines.add(0, sb.reverse().toString());
+                    sb = new StringBuilder();
+                    lineCount++;
+                  }
+                } else {
+                  sb.append(c);
+                }
+                pos--;
+              }
+              // Don't forget the first line
+              if (sb.length() > 0 && lineCount < logCount) {
+                lines.add(0, sb.reverse().toString());
+              }
+            }
+          }
+
+          System.out.println("[MongoDB] Read " + lines.size() + " audit log entries");
+          for (String line : lines) {
+            System.out.println("  " + line);
+          }
+          return Status.OK;
+        } else {
+          System.out.println("[MongoDB] Audit log file not found or not readable: " + auditLogPath);
+        }
+      }
+
+      // Fallback: Try reading from system.profile collection (operation profiling)
+      MongoCollection<Document> profileCollection = database.getCollection("system.profile");
+      FindIterable<Document> profiles = profileCollection.find()
+          .sort(new Document("ts", -1))
+          .limit(logCount);
+
+      int count = 0;
+      for (Document profile : profiles) {
+        System.out.println("  Profile: " + profile.toJson());
+        count++;
+      }
+
+      if (count > 0) {
+        System.out.println("[MongoDB] Read " + count + " profile entries");
+      } else {
+        System.out.println("[MongoDB] No profile entries found. " +
+            "Enable profiling with: db.setProfilingLevel(2)");
+      }
 
       return Status.OK;
     } catch (Exception e) {
       System.err.println("\nError in readLog: " + e.toString());
+      e.printStackTrace();
       return Status.ERROR;
     }
   }

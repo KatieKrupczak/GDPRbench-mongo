@@ -1,0 +1,13 @@
+workload,audit_logging,throughput_ops_sec
+a,disabled,8872.01
+b,disabled,2709.19
+c,disabled,2644.87
+d,disabled,2584.07
+e,disabled,1522.74
+f,disabled,2006.18
+a,enabled,6802.51
+b,enabled,2245.41
+c,enabled,2415.86
+d,enabled,2345.51
+e,enabled,1371.45
+f,enabled,1920.93

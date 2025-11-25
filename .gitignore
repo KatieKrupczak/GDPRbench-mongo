@@ -1,0 +1,34 @@
+# MongoDB data and logs
+data/
+logs/
+
+# Benchmark results
+results/
+
+# MongoDB config files (generated)
+configs/
+
+# Compiled bytecode
+target/
+src/target/
+**/target/
+
+# Output files from testing
+output*
+
+# IDE files
+.project
+.classpath
+.settings
+.checkstyle
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Editor temp files
+*.swp
+*~
+
+# macOS
+.DS_Store
