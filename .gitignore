@@ -1,12 +1,13 @@
 # MongoDB data and logs
 data/
 logs/
+certs/
 
 # Benchmark results
 results/
 
 # MongoDB config files (generated)
-configs/
+#configs/
 
 # Compiled bytecode
 target/
