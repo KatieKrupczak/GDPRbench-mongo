@@ -1,0 +1,21 @@
+# MongoDB configuration WITHOUT audit logging
+# For GDPR compliance benchmarking - baseline comparison
+
+storage:
+  dbPath: /Users/nithinsinghal/code/CS6400/GDPRbench-mongo/data/db-noaudit
+  journal:
+    enabled: true
+
+systemLog:
+  destination: file
+  path: /Users/nithinsinghal/code/CS6400/GDPRbench-mongo/logs/mongod-noaudit.log
+  logAppend: true
+
+net:
+  port: 27017
+  bindIp: 127.0.0.1
+
+# No audit logging
+# No operation profiling
+operationProfiling:
+  mode: off
