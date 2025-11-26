@@ -10,6 +10,7 @@ LUKS_DIR="$PROJECT_ROOT/.luks"
 LUKS_IMG="$LUKS_DIR/mongo.img"
 LUKS_NAME="mongo_luks"
 LUKS_MOUNT="$LUKS_DIR/mnt"
+KEYFILE="$SCRIPT_DIR/mongo-luks.key"
 
 mkdir -p "$LUKS_MOUNT"
 
