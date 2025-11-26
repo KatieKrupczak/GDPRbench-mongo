@@ -14,8 +14,13 @@ LUKS_MOUNT="$LUKS_DIR/mnt"
 mkdir -p "$LUKS_MOUNT"
 
 if ! [ -f "$LUKS_IMG" ]; then
-  echo "ERROR: LUKS image not found at $LUKS_IMG"
-  echo "Run scripts/luks-create.sh first."
+  echo "[luks] ERROR: LUKS image not found at $LUKS_IMG"
+  echo "       (run scripts/luks-create.sh or let run-all-workloads.sh auto-create)"
+  exit 1
+fi
+
+if [ ! -f "$KEYFILE" ]; then
+  echo "[luks] ERROR: key file not found at $KEYFILE"
   exit 1
 fi
 
@@ -25,8 +30,8 @@ if mountpoint -q "$LUKS_MOUNT"; then
   exit 0
 fi
 
-echo "[luks] Opening $LUKS_IMG..."
-sudo cryptsetup open "$LUKS_IMG" "$LUKS_NAME"
+echo "[luks] Opening $LUKS_IMG with committed key file..."
+sudo cryptsetup open "$LUKS_IMG" "$LUKS_NAME" --key-file "$KEYFILE"
 
 echo "[luks] Mounting to $LUKS_MOUNT..."
 sudo mount "/dev/mapper/$LUKS_NAME" "$LUKS_MOUNT"
