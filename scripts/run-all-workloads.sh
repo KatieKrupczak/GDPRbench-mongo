@@ -12,7 +12,7 @@
 #   iterations: number of times to run each workload (default: 1)
 #               if > 1, reports average throughput and raw per-run values.
 
-set -e
+#set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -36,6 +36,8 @@ LUKS_NAME="mongo_luks"
 
 # TLS cert for encryption-in-transit (created by scripts/setup-tls.sh)
 TLS_DIR="$PROJECT_ROOT/certs"
+TLS_TRUSTSTORE="$TLS_DIR/mongo-truststore.jks"
+TLS_TRUSTSTORE_PASSWORD="changeit"
 TLS_PEM="$TLS_DIR/server.pem"
 
 WORKLOADS="a b c d e f"
@@ -99,7 +101,7 @@ apply_feature_config() {
 
     # Set Mongo URL based on encryption flag
     if [ "$ENCRYPTION_ENABLED" = true ]; then
-        MONGO_URL="mongodb://localhost:27017/ycsb?w=1&tls=true&tlsInsecure=true"
+        MONGO_URL="mongodb://localhost:27017/ycsb?w=1&ssl=true"
     else
         MONGO_URL="mongodb://localhost:27017/ycsb?w=1"
     fi
@@ -125,10 +127,12 @@ start_mongo() {
         fi
 
         echo "[mongo] Starting with TLS (requireTLS) and encrypted dbPath=$DATA_DIR"
-        cmd+=( --tlsMode requireTLS
-               --tlsCertificateKeyFile "$TLS_PEM"
-               --tlsAllowInvalidCertificates
-               --tlsAllowInvalidHostnames )
+        cmd+=(
+            --tlsMode requireTLS
+            --tlsCertificateKeyFile "$TLS_DIR/server.pem"
+            --tlsCAFile "$TLS_DIR/ca.pem"
+            --tlsAllowConnectionsWithoutCertificates
+        )
     else
         echo "[mongo] Starting without TLS (unencrypted in transit), dbPath=$DATA_DIR"
     fi
@@ -183,11 +187,13 @@ run_single_iteration() {
 
     # Run phase and capture throughput
     local output=$(./bin/ycsb.sh run mongodb -P "workloads/workload$workload" \
-        -p mongodb.url="$MONGO_URL" 2>&1)
+        -p mongodb.url="$MONGO_URL" 2>&1 || true)
 
     local throughput=$(echo "$output" | grep "\[OVERALL\], Throughput" | awk -F', ' '{print $3}')
 
     if [ -z "$throughput" ]; then
+        echo "[ycsb] No throughput found for workload $workload, raw output:"
+        echo "$output"
         echo "0"
     else
         echo "$throughput"
@@ -279,7 +285,7 @@ fi
 
 # Configurations to run
 #CONFIGS=("baseline" "audit" "encryption" "ttl" "all") # Full set
-CONFIGS=("baseline" "audit" "encryption" ) # Implemented set
+CONFIGS=("encryption" "baseline") # currently testing
 
 for config in "${CONFIGS[@]}"; do
     echo "------------------------------------------"
@@ -290,6 +296,21 @@ for config in "${CONFIGS[@]}"; do
     apply_feature_config "$config"
 
     if [ "$ENCRYPTION_ENABLED" = true ]; then
+
+        # Ensure truststore exists
+        if [ ! -f "$TLS_TRUSTSTORE" ]; then
+            echo "[tls] Creating Java truststore at $TLS_TRUSTSTORE..."
+            keytool -importcert \
+                -file "$TLS_DIR/ca.pem" \
+                -alias gdpr-mongo-ca \
+                -keystore "$TLS_TRUSTSTORE" \
+                -storepass "$TLS_TRUSTSTORE_PASSWORD" \
+                -noprompt
+        fi
+
+        # Tell YCSB's JVM to use this truststore
+        export JAVA_OPTS="-Djavax.net.ssl.trustStore=$TLS_TRUSTSTORE -Djavax.net.ssl.trustStorePassword=$TLS_TRUSTSTORE_PASSWORD"
+
         mkdir -p "$LUKS_DIR" "$LUKS_MOUNT"
 
         # If the LUKS image doesn't exist yet, create it once
@@ -303,11 +324,13 @@ for config in "${CONFIGS[@]}"; do
             echo "[luks] Mounting LUKS volume for encryption-at-rest..."
             "$SCRIPT_DIR/luks-open.sh"
         fi
-        
+
         DATA_DIR="$LUKS_MOUNT"
     else
         # Use default unencrypted data dir
         DATA_DIR="$DEFAULT_DATA_DIR"
+
+        unset JAVA_OPTS
     fi
 
     # Handle TTL setup/teardown
@@ -332,6 +355,7 @@ for config in "${CONFIGS[@]}"; do
     done
 
     stop_mongo
+    sleep 2
 
     # Unmount LUKS if used
     if [ "$ENCRYPTION_ENABLED" = true ]; then

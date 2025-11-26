@@ -10,7 +10,30 @@ CA_KEY="$CERT_DIR/ca.key"
 CA_CERT="$CERT_DIR/ca.pem"
 SERVER_KEY="$CERT_DIR/server.key"
 SERVER_CSR="$CERT_DIR/server.csr"
-SERVER_CERT="$CERT_DIR/server.pem"
+SERVER_CERT="$CERT_DIR/server.crt"
+SERVER_PEM="$CERT_DIR/server.pem"   # combined key + cert for mongod
+OPENSSL_CFG="$CERT_DIR/openssl-server.cnf"
+
+###############################################
+# 0. OpenSSL config for server cert with SAN
+###############################################
+cat > "$OPENSSL_CFG" <<EOF
+[ req ]
+default_bits       = 4096
+distinguished_name = req_distinguished_name
+req_extensions     = v3_req
+prompt             = no
+
+[ req_distinguished_name ]
+CN = localhost
+
+[ v3_req ]
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = localhost
+IP.1  = 127.0.0.1
+EOF
 
 ###############################################
 # 1. Create CA (if not exists)
@@ -37,16 +60,16 @@ echo "[tls] Generating server private key..."
 openssl genrsa -out "$SERVER_KEY" 4096
 
 ###############################################
-# 3. Create server CSR
+# 3. Create server CSR with SAN from config
 ###############################################
-echo "[tls] Generating server CSR..."
+echo "[tls] Generating server CSR with SAN..."
 openssl req -new \
   -key "$SERVER_KEY" \
-  -subj "/CN=localhost" \
-  -out "$SERVER_CSR"
+  -out "$SERVER_CSR" \
+  -config "$OPENSSL_CFG"
 
 ###############################################
-# 4. Sign server cert with CA
+# 4. Sign server cert with CA + SAN extension
 ###############################################
 echo "[tls] Signing server certificate with CA..."
 openssl x509 -req \
@@ -56,8 +79,16 @@ openssl x509 -req \
   -CAcreateserial \
   -out "$SERVER_CERT" \
   -days 365 \
-  -sha256
+  -sha256 \
+  -extensions v3_req \
+  -extfile "$OPENSSL_CFG"
 
-echo "[tls] Done."
-echo "Generated files in $CERT_DIR:"
+###############################################
+# 5. Create combined PEM (key + cert)
+###############################################
+echo "[tls] Creating combined server PEM (key + cert)..."
+cat "$SERVER_KEY" "$SERVER_CERT" > "$SERVER_PEM"
+chmod 600 "$SERVER_KEY" "$SERVER_CERT" "$SERVER_PEM"
+
+echo "[tls] Done. Generated files in $CERT_DIR:"
 ls -1 "$CERT_DIR"
