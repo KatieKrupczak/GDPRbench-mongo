@@ -11,6 +11,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SRC_DIR="$PROJECT_ROOT/src"
+
 DATA_DIR="$PROJECT_ROOT/data/db-benchmark"
 LOG_DIR="$PROJECT_ROOT/logs"
 RESULTS_FILE="$PROJECT_ROOT/results/throughput_results.csv"
