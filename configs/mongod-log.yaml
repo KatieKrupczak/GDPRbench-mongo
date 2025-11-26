@@ -1,0 +1,31 @@
+# MongoDB configuration WITH audit logging enabled
+# For GDPR compliance benchmarking
+#
+# IMPORTANT: Audit logging requires MongoDB Enterprise Edition
+# If using Community Edition, you'll need to use a different approach (see README)
+
+storage:
+  dbPath: /Users/nithinsinghal/code/CS6400/GDPRbench-mongo/data/db-audit
+  journal:
+    enabled: true
+
+systemLog:
+  destination: file
+  path: /Users/nithinsinghal/code/CS6400/GDPRbench-mongo/logs/mongod.log
+  logAppend: true
+
+net:
+  port: 27017
+  bindIp: 127.0.0.1
+
+# Audit logging configuration (MongoDB Enterprise only)
+auditLog:
+  destination: file
+  format: JSON
+  path: /Users/nithinsinghal/code/CS6400/GDPRbench-mongo/logs/audit.json
+  filter: '{ atype: { $in: [ "authenticate", "createCollection", "createIndex", "insert", "update", "delete", "find", "query", "getMore" ] } }'
+
+# Set profiling to log all operations (alternative for Community Edition)
+operationProfiling:
+  mode: all
+  slowOpThresholdMs: 0

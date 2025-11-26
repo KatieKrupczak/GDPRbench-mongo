@@ -5,9 +5,6 @@ logs/
 # Benchmark results
 results/
 
-# MongoDB config files (generated)
-configs/
-
 # Compiled bytecode
 target/
 src/target/
