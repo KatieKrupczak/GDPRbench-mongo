@@ -2,32 +2,62 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+CERT_DIR="$SCRIPT_DIR/../certs"
 
-TLS_DIR="$PROJECT_ROOT/certs"
-mkdir -p "$TLS_DIR"
+mkdir -p "$CERT_DIR"
 
-SERVER_KEY="$TLS_DIR/server.key"
-SERVER_CERT="$TLS_DIR/server.crt"
-SERVER_PEM="$TLS_DIR/server.pem"
+CA_KEY="$CERT_DIR/ca.key"
+CA_CERT="$CERT_DIR/ca.pem"
+SERVER_KEY="$CERT_DIR/server.key"
+SERVER_CSR="$CERT_DIR/server.csr"
+SERVER_CERT="$CERT_DIR/server.pem"
 
-if [ -f "$SERVER_PEM" ]; then
-  echo "TLS cert already exists at $SERVER_PEM"
-  exit 0
+###############################################
+# 1. Create CA (if not exists)
+###############################################
+if [ ! -f "$CA_KEY" ]; then
+  echo "[tls] Generating CA private key..."
+  openssl genrsa -out "$CA_KEY" 4096
 fi
 
-echo "Generating self-signed TLS cert for MongoDB..."
+if [ ! -f "$CA_CERT" ]; then
+  echo "[tls] Generating CA certificate..."
+  openssl req -x509 -new -nodes \
+    -key "$CA_KEY" \
+    -sha256 \
+    -days 365 \
+    -subj "/CN=Local MongoDB Test CA" \
+    -out "$CA_CERT"
+fi
 
-# 1. Generate private key
+###############################################
+# 2. Generate server key
+###############################################
+echo "[tls] Generating server private key..."
 openssl genrsa -out "$SERVER_KEY" 4096
 
-# 2. Self-signed cert (CN=localhost)
-openssl req -new -x509 -key "$SERVER_KEY" -out "$SERVER_CERT" -days 365 \
-  -subj "/CN=localhost"
+###############################################
+# 3. Create server CSR
+###############################################
+echo "[tls] Generating server CSR..."
+openssl req -new \
+  -key "$SERVER_KEY" \
+  -subj "/CN=localhost" \
+  -out "$SERVER_CSR"
 
-# 3. Combine into PEM (what mongod expects)
-cat "$SERVER_KEY" "$SERVER_CERT" > "$SERVER_PEM"
-chmod 600 "$SERVER_KEY" "$SERVER_PEM"
+###############################################
+# 4. Sign server cert with CA
+###############################################
+echo "[tls] Signing server certificate with CA..."
+openssl x509 -req \
+  -in "$SERVER_CSR" \
+  -CA "$CA_CERT" \
+  -CAkey "$CA_KEY" \
+  -CAcreateserial \
+  -out "$SERVER_CERT" \
+  -days 365 \
+  -sha256
 
-echo "Created: $SERVER_PEM"
-echo "Use this with mongod: --tlsCertificateKeyFile $SERVER_PEM"
+echo "[tls] Done."
+echo "Generated files in $CERT_DIR:"
+ls -1 "$CERT_DIR"
