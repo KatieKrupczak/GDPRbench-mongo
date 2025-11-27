@@ -145,7 +145,17 @@ start_mongo() {
 # Function to stop MongoDB
 stop_mongo() {
     echo "Stopping MongoDB..."
-    mongosh --quiet --eval "db.adminCommand({shutdown: 1})" 2>/dev/null || true
+
+    # If mongod isn't running, nothing to do
+    if ! pgrep -x mongod >/dev/null; then
+        return
+    fi
+
+    # mongosh --quiet --eval "db.adminCommand({shutdown: 1})" 2>/dev/null || true #doesn't work if TLS is enabled
+    
+    # Ask mongod to shut down cleanly based on dbPath, independent of TLS
+    mongod --dbpath "$DATA_DIR" --shutdown >/dev/null 2>&1 || true
+
     sleep 2
 }
 
@@ -355,7 +365,6 @@ for config in "${CONFIGS[@]}"; do
     done
 
     stop_mongo
-    sleep 2
 
     # Unmount LUKS if used
     if [ "$ENCRYPTION_ENABLED" = true ]; then
