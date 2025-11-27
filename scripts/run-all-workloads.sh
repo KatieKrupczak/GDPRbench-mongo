@@ -94,7 +94,7 @@ apply_feature_config() {
             TTL_ENABLED=true
             ;;
         *)
-            echo "Unknown feature config: $config" >&2 #XXX
+            echo "Unknown feature config: $config" >&2
             exit 1
             ;;
     esac
@@ -295,7 +295,7 @@ fi
 
 # Configurations to run
 #CONFIGS=("baseline" "audit" "encryption" "ttl" "all") # Full set
-CONFIGS=("encryption" "baseline") # currently testing
+CONFIGS=("baseline" "audit" "encryption") # CHANGE ME TO RUN DIFFERENT CONFIGURATIONS XXX
 
 for config in "${CONFIGS[@]}"; do
     echo "------------------------------------------"
@@ -343,7 +343,7 @@ for config in "${CONFIGS[@]}"; do
         unset JAVA_OPTS
     fi
 
-    # Handle TTL setup/teardown
+    # Handle TTL setup/teardown XXX IF NEEDED BEFORE STARTING MONGO
     if [ "$TTL_ENABLED" = true ]; then
         enable_ttl
     else

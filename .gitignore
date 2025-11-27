@@ -1,8 +1,15 @@
 # MongoDB data and logs
 data/
 logs/
-certs/
 .luks/
+
+certs/ca.key
+certs/ca.srl
+certs/mongo-truststore.jks
+certs/server.key
+certs/server.csr
+certs/server.pem
+certs/server.crt
 
 # Benchmark results
 results/
