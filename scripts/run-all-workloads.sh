@@ -121,9 +121,8 @@ start_mongo() {
     if [ "$ENCRYPTION_ENABLED" = true ]; then
         # Ensure TLS cert exists
         if [ ! -f "$TLS_PEM" ]; then
-            echo "[tls] TLS PEM not found at $TLS_PEM"
-            echo "      Run: ./scripts/setup-tls.sh"
-            exit 1
+            echo "[tls] TLS material not found in $TLS_DIR - running setup-tls.sh..."
+            "$SCRIPT_DIR/setup-tls.sh"
         fi
 
         echo "[mongo] Starting with TLS (requireTLS) and encrypted dbPath=$DATA_DIR"
