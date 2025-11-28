@@ -57,6 +57,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.Vector;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Date;
 
 /**
  * MongoDB binding for YCSB framework using the MongoDB Inc. <a
@@ -289,8 +290,12 @@ public class MongoDbClient extends DB {
         cleanupIntervalSeconds = Integer.parseInt(
             props.getProperty("mongodb.cleanup.interval", "60"));
 
+        // Optional: client-side sweeper; DISABLED unless explicitly requested
+        boolean sweeperEnabled = Boolean.parseBoolean(
+            props.getProperty("mongodb.ttlCleanupEnabled", "false"));
+
         // Start automatic cleanup thread
-        if (false && cleanupThread == null) {
+        if (cleanupThread == null) {
           startCleanupThread();
         }
 
@@ -398,6 +403,15 @@ public class MongoDbClient extends DB {
       for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
         toInsert.put(entry.getKey(), entry.getValue().toArray());
       }
+
+      // --- Native TTL: add expireAt field if enabled ---
+      if (ttlEnabled && ttlSeconds > 0L) {
+        long nowMillis = System.currentTimeMillis();
+        long expiryMillis = nowMillis + ttlSeconds * 1000L;
+        Date expireAt = new Date(expiryMillis);
+        toInsert.put("expireAt", expireAt);
+      }
+      // --- end TTL ---
 
       if (batchSize == 1) {
         if (useUpsert) {
@@ -590,6 +604,15 @@ public class MongoDbClient extends DB {
       for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
         fieldsToSet.put(entry.getKey(), entry.getValue().toArray());
       }
+
+      // --- Native TTL: refresh expireAt on update (optional) ---
+      if (ttlEnabled && ttlSeconds > 0L) {
+        long nowMillis = System.currentTimeMillis();
+        long expiryMillis = nowMillis + ttlSeconds * 1000L;
+        fieldsToSet.put("expireAt", new Date(expiryMillis));
+      }
+      // --- end TTL ---
+
       Document update = new Document("$set", fieldsToSet);
 
       UpdateResult result = collection.updateOne(query, update);

@@ -212,8 +212,8 @@ run_single_iteration() {
     ./bin/ycsb.sh load mongodb \
         -P "workloads/workload$workload" \
         -p mongodb.url="$MONGO_URL" \
-        -p mongodb.ttlEnabled="$TTL_ENABLED" 
-        -p mongodb.ttleSeconds="$TTL_SECONDS" 2>&1 | grep -q "Return=OK" || true
+        -p mongodb.ttlEnabled="$TTL_ENABLED" \
+        -p mongodb.ttlSeconds="$TTL_SECONDS" 2>&1 | grep -q "Return=OK" || true
 
     # Run phase and capture throughput
     local output=$(
