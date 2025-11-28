@@ -48,7 +48,8 @@ ITERATIONS=${1:-1}
 # Feature Flags for current config (booleans as strings)
 AUDIT_ENABLED=false
 ENCRYPTION_ENABLED=false
-TTL_ENABLED=false   # Placeholder for future TTL implementation
+TTL_ENABLED=false
+TTL_SECONDS=300 # How long records live in TTL mode (seconds)
 
 # MongoDB connection URL
 MONGO_URL="mongodb://localhost:27017/ycsb?w=1"
@@ -169,17 +170,34 @@ clean_db() {
     mongosh --quiet --eval "db.getSiblingDB('ycsb').dropDatabase()" 2>/dev/null
 }
 
-# ADD TTL HOOKS HERE IF NEEDED
 enable_ttl() {
-    # TODO: implement TTL indexes / policies for GDPR TTL experiment
-    # Example placeholder:
-    # mongosh --quiet --eval "db.getSiblingDB('ycsb').collection.createIndex({expireAt:1},{expireAfterSeconds:0})"
-    echo "[ttl] TTL feature ENABLED (hook - implement TTL indexes here)"
+    echo "[ttl] Creating TTL index on ycsb.usertable(expireAt)..."
+    mongosh --quiet --eval "
+        const db = db.getSiblingDB('ycsb');
+        try {
+            db.usertable.dropIndex({ expireAt: 1 });
+        } catch (e) {
+            // ignore if index doesn't exist
+        }
+        db.usertable.createIndex(
+            { expireAt: 1 },
+            { expireAfterSeconds: 0, name: 'expireAt_ttl_idx' }
+        );
+    " 2>/dev/null || true
+    echo "[ttl] TTL index created (expireAt, expireAfterSeconds=0)."
 }
 
 disable_ttl() {
-    # TODO: disable TTL behavior if needed (drop TTL indexes, etc.)
-    echo "[ttl] TTL feature DISABLED (hook - clean up TTL config here)"
+    echo "[ttl] Dropping TTL index on ycsb.usertable(expireAt) if present..."
+    mongosh --quiet --eval "
+        const db = db.getSiblingDB('ycsb');
+        try {
+            db.usertable.dropIndex({ expireAt: 1 });
+        } catch (e) {
+            // ignore if index doesn't exist
+        }
+    " 2>/dev/null || true
+    echo "[ttl] TTL index dropped (if it existed)."
 }
 
 # ----------------------------------------
@@ -191,12 +209,20 @@ run_single_iteration() {
 
     # Load phase
     cd "$SRC_DIR"
-    ./bin/ycsb.sh load mongodb -P "workloads/workload$workload" \
-        -p mongodb.url="$MONGO_URL" 2>&1 | grep -q "Return=OK" || true
+    ./bin/ycsb.sh load mongodb \
+        -P "workloads/workload$workload" \
+        -p mongodb.url="$MONGO_URL" \
+        -p mongodb.ttlEnabled="$TTL_ENABLED" 
+        -p mongodb.ttleSeconds="$TTL_SECONDS" 2>&1 | grep -q "Return=OK" || true
 
     # Run phase and capture throughput
-    local output=$(./bin/ycsb.sh run mongodb -P "workloads/workload$workload" \
-        -p mongodb.url="$MONGO_URL" 2>&1 || true)
+    local output=$(
+        ./bin/ycsb.sh run mongodb \
+            -P "workloads/workload$workload" \
+            -p mongodb.url="$MONGO_URL" \
+            -p mongodb.ttlEnabled="$TTL_ENABLED" \
+            -p mongodb.ttlSeconds="$TTL_SECONDS" 2>&1 || true
+    )
 
     local throughput=$(echo "$output" | grep "\[OVERALL\], Throughput" | awk -F', ' '{print $3}')
 
@@ -294,7 +320,7 @@ fi
 
 # Configurations to run
 #CONFIGS=("baseline" "audit" "encryption" "ttl" "all") # Full set
-CONFIGS=("baseline" "audit" "encryption") # CHANGE ME TO RUN DIFFERENT CONFIGURATIONS XXX
+CONFIGS=("baseline" "ttl") # CHANGE ME TO RUN DIFFERENT CONFIGURATIONS XXX
 
 for config in "${CONFIGS[@]}"; do
     echo "------------------------------------------"
@@ -342,26 +368,21 @@ for config in "${CONFIGS[@]}"; do
         unset JAVA_OPTS
     fi
 
-    # Handle TTL setup/teardown XXX IF NEEDED BEFORE STARTING MONGO
-    if [ "$TTL_ENABLED" = true ]; then
-        enable_ttl
-    else
-        disable_ttl
-    fi
-
     # Start MongoDB with current config
     start_mongo
 
     if [ "$TTL_ENABLED" = true ]; then
-        echo "[ttl] TTL is ENABLED for this config." # call enable_ttl() here
-    else
-        echo "[ttl] TTL is DISABLED for this config." # call disable_ttl() here
+        enable_ttl
     fi
 
     # Run all workloads under current config
     for w in $WORKLOADS; do
         run_workload "$w" "$config"
     done
+
+    #if [ "$TTL_ENABLED" = true ]; then
+    #    disable_ttl # Optional cleanup since db is dropped anyway
+    #fi
 
     stop_mongo
 

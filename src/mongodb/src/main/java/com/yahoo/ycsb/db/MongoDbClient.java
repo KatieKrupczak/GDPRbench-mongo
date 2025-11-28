@@ -125,6 +125,10 @@ public class MongoDbClient extends DB {
   private static Thread cleanupThread;
   private static volatile boolean cleanupRunning = false;
   private static int cleanupIntervalSeconds = 60;
+  
+  /** TTL config: enabled flag and duration (seconds). */
+  private static boolean ttlEnabled = false;
+  private static long ttlSeconds = 0L;
 
   /**
    * Cleanup any state for this DB. Called once per DB instance; there is one DB
@@ -275,12 +279,18 @@ public class MongoDbClient extends DB {
         if (readPreference == null) {
           readPreference = ReadPreference.primary();
         }
+
+        // TTL Boolean if set by run-all-workloads.sh
+        ttlEnabled = Boolean.parseBoolean(props.getProperty("mongodb.ttlEnabled", "false"));
+
+        ttlSeconds = Long.parseLong(props.getProperty("mongodb.ttlSeconds", "0"));
+
         // Get cleanup interval from properties
         cleanupIntervalSeconds = Integer.parseInt(
             props.getProperty("mongodb.cleanup.interval", "60"));
 
         // Start automatic cleanup thread
-        if (cleanupThread == null) {
+        if (false && cleanupThread == null) {
           startCleanupThread();
         }
 
