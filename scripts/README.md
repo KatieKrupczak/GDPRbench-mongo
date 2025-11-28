@@ -14,6 +14,7 @@ Throughput results are recorded to CSV files.
 ### Prerequisites
 
 - MongoDB installed (`brew install mongodb-community@7.0`)
+  - if this doesn't work, first run brew tap `mongodb/brew` then try the above
 - Project built (`cd src && mvn clean package -DskipTests -Dcheckstyle.skip=true -Psource-run`)
 - Cryptsetup (LUKS encryption-at-rest) (`sudo apt install cryptsetup`)
 - OpenSSL (`sudo apt install openssl`)
