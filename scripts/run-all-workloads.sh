@@ -340,7 +340,7 @@ fi
 
 # Configurations to run
 CONFIGS=("baseline" "audit" "encryption" "ttl" "all") # Full set
-#CONFIGS=("ttl") # CHANGE ME TO RUN DIFFERENT CONFIGURATIONS XXX
+#CONFIGS=("all") # CHANGE ME TO RUN DIFFERENT CONFIGURATIONS XXX
 
 for config in "${CONFIGS[@]}"; do
     echo "------------------------------------------"

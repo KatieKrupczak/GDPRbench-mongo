@@ -6,7 +6,8 @@ logs/
 certs/
 
 # Benchmark results
-results/
+results/throughput_raw.csv
+results/throughput_results.csv
 
 # MongoDB config files (generated)
 #configs/
