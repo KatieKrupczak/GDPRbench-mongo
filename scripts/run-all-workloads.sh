@@ -339,8 +339,8 @@ if pgrep -x mongod > /dev/null; then
 fi
 
 # Configurations to run
-#CONFIGS=("baseline" "audit" "encryption" "ttl" "all") # Full set
-CONFIGS=("ttl") # CHANGE ME TO RUN DIFFERENT CONFIGURATIONS XXX
+CONFIGS=("baseline" "audit" "encryption" "ttl" "all") # Full set
+#CONFIGS=("ttl") # CHANGE ME TO RUN DIFFERENT CONFIGURATIONS XXX
 
 for config in "${CONFIGS[@]}"; do
     echo "------------------------------------------"
@@ -396,7 +396,7 @@ for config in "${CONFIGS[@]}"; do
         run_workload "$w" "$config"
     done
 
-    #stop_mongo
+    stop_mongo
 
     # Unmount LUKS if used
     if [ "$ENCRYPTION_ENABLED" = true ]; then
