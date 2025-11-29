@@ -405,16 +405,6 @@ public class MongoDbClient extends DB {
         toInsert.put(entry.getKey(), entry.getValue().toArray());
       }
 
-      // --- Native TTL for non-TTL-aware workloads ---
-      if (ttlEnabled && ttlSeconds > 0L) {
-        long nowMillis = System.currentTimeMillis();
-        long expiryMillis = nowMillis + ttlSeconds * 1000L;
-        Date expireAt = new Date(expiryMillis);
-        toInsert.put("expireAt", expireAt);
-      }
-      // --- end TTL ---
-
-
       if (batchSize == 1) {
         if (useUpsert) {
           // this is effectively an insert, but using an upsert instead due
@@ -648,7 +638,7 @@ public class MongoDbClient extends DB {
         toInsert.put("TTL", ttl);        // per-record TTL in seconds
 
         // --- Layer B/C: unified expireAt for all TTL logic ---
-        Date expireAt = new Date(now.getTime() + ttl * 100L);
+        Date expireAt = new Date(now.getTime() + ttl * 1000L);
         toInsert.put("expireAt", expireAt);
       }
       // else: ttlEnabled == false -> no TTL metadata; behaves like plain insert
