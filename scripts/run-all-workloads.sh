@@ -48,7 +48,11 @@ ITERATIONS=${1:-1}
 # Feature Flags for current config (booleans as strings)
 AUDIT_ENABLED=false
 ENCRYPTION_ENABLED=false
-TTL_ENABLED=false   # Placeholder for future TTL implementation
+TTL_ENABLED=false
+
+TTL_SWEEPER_ENABLED=false       # true => enable client-side sweeper (Layer C)
+TTL_SWEEPER_INTERVAL=1         # sweeper interval in seconds
+
 
 # MongoDB connection URL
 MONGO_URL="mongodb://localhost:27017/ycsb?w=1"
@@ -72,26 +76,31 @@ apply_feature_config() {
             AUDIT_ENABLED=false
             ENCRYPTION_ENABLED=false
             TTL_ENABLED=false
+            TTL_SWEEPER_ENABLED=false
             ;;
         audit)
             AUDIT_ENABLED=true
             ENCRYPTION_ENABLED=false
             TTL_ENABLED=false
+            TTL_SWEEPER_ENABLED=false
             ;;
         encryption)
             AUDIT_ENABLED=false
             ENCRYPTION_ENABLED=true
             TTL_ENABLED=false
+            TTL_SWEEPER_ENABLED=false
             ;;
         ttl)
             AUDIT_ENABLED=false
             ENCRYPTION_ENABLED=false
             TTL_ENABLED=true
+            TTL_SWEEPER_ENABLED=true
             ;;
         all)
             AUDIT_ENABLED=true
             ENCRYPTION_ENABLED=true
             TTL_ENABLED=true
+            TTL_SWEEPER_ENABLED=true
             ;;
         *)
             echo "Unknown feature config: $config" >&2
@@ -114,6 +123,8 @@ apply_feature_config() {
 # Function to start MongoDB
 start_mongo() {
     echo "Starting MongoDB..."
+
+    cleanup_stale_mongo
 
     # Base command: dbPath + logpath
     local cmd=(mongod --dbpath "$DATA_DIR" --logpath "$LOG_DIR/mongod.log" --fork --quiet)
@@ -158,6 +169,20 @@ stop_mongo() {
     sleep 2
 }
 
+# Kill any stale mongod that uses this dbPath
+cleanup_stale_mongo() {
+    if pgrep -f "mongod.*${DATA_DIR}" >/dev/null 2>&1; then
+        echo "[mongo] Found existing mongod using ${DATA_DIR}, shutting it down..."
+        mongod --dbpath "$DATA_DIR" --shutdown >/dev/null 2>&1 || true
+        sleep 2
+        # If it's still there, force kill only the ones with this dbPath
+        if pgrep -f "mongod.*${DATA_DIR}" >/dev/null 2>&1; then
+            echo "[mongo] Force killing mongod processes bound to ${DATA_DIR}..."
+            pgrep -f "mongod.*${DATA_DIR}" | xargs kill -9 2>/dev/null || true
+        fi
+    fi
+}
+
 # Function to enable/disable audit (profiling) logging
 set_profiling() {
     local level=$1
@@ -169,18 +194,22 @@ clean_db() {
     mongosh --quiet --eval "db.getSiblingDB('ycsb').dropDatabase()" 2>/dev/null
 }
 
-# ADD TTL HOOKS HERE IF NEEDED
 enable_ttl() {
-    # TODO: implement TTL indexes / policies for GDPR TTL experiment
-    # Example placeholder:
-    # mongosh --quiet --eval "db.getSiblingDB('ycsb').collection.createIndex({expireAt:1},{expireAfterSeconds:0})"
-    echo "[ttl] TTL feature ENABLED (hook - implement TTL indexes here)"
+   echo "[ttl] Creating TTL index on ycsb.usertable(expireAt)..."
+    mongosh --quiet --eval '
+        const db = db.getSiblingDB("ycsb");
+        try {
+            db.usertable.dropIndex({ expireAt: 1 });
+        } catch (e) {
+            // index may not exist, ignore
+        }
+        db.usertable.createIndex(
+            { expireAt: 1 },
+            { expireAfterSeconds: 0, name: "expireAt_ttl_idx" }
+        );
+    ' 2>/dev/null || true
 }
 
-disable_ttl() {
-    # TODO: disable TTL behavior if needed (drop TTL indexes, etc.)
-    echo "[ttl] TTL feature DISABLED (hook - clean up TTL config here)"
-}
 
 # ----------------------------------------
 # Run one YCSB iteration for a workload
@@ -189,14 +218,27 @@ disable_ttl() {
 run_single_iteration() {
     local workload=$1
 
+    # common props for load/run
+    local common_props=(
+        -P "workloads/workload${workload}"
+        -p "mongodb.url=${MONGO_URL}"
+        -p "mongodb.ttlEnabled=${TTL_ENABLED}"
+        -p "mongodb.ttlCleanupEnabled=${TTL_SWEEPER_ENABLED}"
+        -p "mongodb.cleanup.interval=${TTL_SWEEPER_INTERVAL}"
+    )
+
     # Load phase
     cd "$SRC_DIR"
-    ./bin/ycsb.sh load mongodb -P "workloads/workload$workload" \
-        -p mongodb.url="$MONGO_URL" 2>&1 | grep -q "Return=OK" || true
+    ./bin/ycsb.sh load mongodb \
+        "${common_props[@]}" \
+        2>&1 | grep -q "Return=OK" || true
 
     # Run phase and capture throughput
-    local output=$(./bin/ycsb.sh run mongodb -P "workloads/workload$workload" \
-        -p mongodb.url="$MONGO_URL" 2>&1 || true)
+    local output=$(
+        ./bin/ycsb.sh run mongodb  \
+            "${common_props[@]}" \
+            2>&1 || true
+        )
 
     local throughput=$(echo "$output" | grep "\[OVERALL\], Throughput" | awk -F', ' '{print $3}')
 
@@ -221,7 +263,7 @@ run_workload() {
     local encryption_val="$ENCRYPTION_ENABLED"
     local ttl_val="$TTL_ENABLED"
 
-    echo "  Running workload$workload [config=$config_name, audit=$audit_val, enc=$encryption_val, ttl=$ttl_val]..."
+    echo "  Running workload $workload [config=$config_name, audit=$audit_val, enc=$encryption_val, ttl=$ttl_val]..."
 
     local sum=0
     local count=0
@@ -239,6 +281,10 @@ run_workload() {
             set_profiling 2
         else
             set_profiling 0
+        fi
+
+        if [ "$TTL_ENABLED" = true ]; then
+            enable_ttl
         fi
 
         local throughput=$(run_single_iteration "$workload")
@@ -294,7 +340,7 @@ fi
 
 # Configurations to run
 #CONFIGS=("baseline" "audit" "encryption" "ttl" "all") # Full set
-CONFIGS=("baseline" "audit" "encryption") # CHANGE ME TO RUN DIFFERENT CONFIGURATIONS XXX
+CONFIGS=("ttl") # CHANGE ME TO RUN DIFFERENT CONFIGURATIONS XXX
 
 for config in "${CONFIGS[@]}"; do
     echo "------------------------------------------"
@@ -342,28 +388,15 @@ for config in "${CONFIGS[@]}"; do
         unset JAVA_OPTS
     fi
 
-    # Handle TTL setup/teardown XXX IF NEEDED BEFORE STARTING MONGO
-    if [ "$TTL_ENABLED" = true ]; then
-        enable_ttl
-    else
-        disable_ttl
-    fi
-
     # Start MongoDB with current config
     start_mongo
-
-    if [ "$TTL_ENABLED" = true ]; then
-        echo "[ttl] TTL is ENABLED for this config." # call enable_ttl() here
-    else
-        echo "[ttl] TTL is DISABLED for this config." # call disable_ttl() here
-    fi
 
     # Run all workloads under current config
     for w in $WORKLOADS; do
         run_workload "$w" "$config"
     done
 
-    stop_mongo
+    #stop_mongo
 
     # Unmount LUKS if used
     if [ "$ENCRYPTION_ENABLED" = true ]; then

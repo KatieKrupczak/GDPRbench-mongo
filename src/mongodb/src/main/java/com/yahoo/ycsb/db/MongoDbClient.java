@@ -57,6 +57,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.Vector;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Date;
 
 /**
  * MongoDB binding for YCSB framework using the MongoDB Inc. <a
@@ -125,6 +126,9 @@ public class MongoDbClient extends DB {
   private static Thread cleanupThread;
   private static volatile boolean cleanupRunning = false;
   private static int cleanupIntervalSeconds = 60;
+
+  /** TTL config: enabled flag and duration (seconds). */
+  private static boolean ttlEnabled = false;
 
   /**
    * Cleanup any state for this DB. Called once per DB instance; there is one DB
@@ -275,12 +279,19 @@ public class MongoDbClient extends DB {
         if (readPreference == null) {
           readPreference = ReadPreference.primary();
         }
+
+        // Get TTL config from properties set by run-all-workloads.sh
+        ttlEnabled = Boolean.parseBoolean(props.getProperty("mongodb.ttlEnabled", "false"));
+
+        // Optionally start automatic TTL cleanup thread for stricter enforcement
+        boolean sweeperEnabled = Boolean.parseBoolean(props.getProperty("mongodb.ttlCleanupEnabled", "false"));
+
         // Get cleanup interval from properties
         cleanupIntervalSeconds = Integer.parseInt(
             props.getProperty("mongodb.cleanup.interval", "60"));
 
-        // Start automatic cleanup thread
-        if (cleanupThread == null) {
+        // Start automatic cleanup thread only if TTL and sweeper are enabled
+        if (ttlEnabled && sweeperEnabled && cleanupThread == null) {
           startCleanupThread();
         }
 
@@ -345,11 +356,16 @@ public class MongoDbClient extends DB {
    */
   public final Status cleanupExpiredDocuments(final String table) {
     try {
-      MongoCollection<Document> collection = database.getCollection(table);
-      long currentTimeSeconds = System.currentTimeMillis() / 1000;
+      if (!ttlEnabled) {
+        // TTL globally disabled; nothing to clean
+        return Status.OK;
+      }
 
-      Document query = new Document("expiresAt",
-          new Document("$lte", currentTimeSeconds));
+      MongoCollection<Document> collection = database.getCollection(table);
+      Date now = new Date();
+
+      Document query = new Document("expireAt",
+        new Document("$lte", now));
 
       DeleteResult result = collection.deleteMany(query);
 
@@ -388,6 +404,16 @@ public class MongoDbClient extends DB {
       for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
         toInsert.put(entry.getKey(), entry.getValue().toArray());
       }
+
+      // --- Native TTL for non-TTL-aware workloads ---
+      if (ttlEnabled && ttlSeconds > 0L) {
+        long nowMillis = System.currentTimeMillis();
+        long expiryMillis = nowMillis + ttlSeconds * 1000L;
+        Date expireAt = new Date(expiryMillis);
+        toInsert.put("expireAt", expireAt);
+      }
+      // --- end TTL ---
+
 
       if (batchSize == 1) {
         if (useUpsert) {
@@ -463,12 +489,10 @@ public class MongoDbClient extends DB {
       Document queryResult = findIterable.first();
 
       if (queryResult != null) {
-        if (queryResult.containsKey("expiresAt")) {
-          long expiresAt = queryResult.getLong("expiresAt");
-          long currentTimeSec = System.currentTimeMillis() / 1000;
-
-          if (currentTimeSec >= expiresAt) {
-            // Document is logically expired, even if not yet deleted by TTL monitor
+        if (ttlEnabled && queryResult.containsKey("expireAt")) {
+          Date expireAt = queryResult.getDate("expireAt");
+          if (expireAt != null && expireAt.getTime() <= System.currentTimeMillis()) {
+            // Logically expired, even if not deleted yet
             return Status.NOT_FOUND;
           }
         }
@@ -511,11 +535,13 @@ public class MongoDbClient extends DB {
       Document query = new Document("_id", scanRange);
 
       // Exclude expired documents
-      long currentTimeSeconds = System.currentTimeMillis() / 1000;
-      query.append("$or", java.util.Arrays.asList(
-          new Document("expiresAt", new Document("$exists", false)), // No TTL
-          new Document("expiresAt", new Document("$gt", currentTimeSeconds)) // Not expired
-      ));
+      if (ttlEnabled) {
+        Date now = new Date();
+        query.append("$or", java.util.Arrays.asList(
+            new Document("expireAt", new Document("$exists", false)), // no TTL
+            new Document("expireAt", new Document("$gt", now))        // not expired
+        ));
+      }
 
       Document sort = new Document("_id", INCLUDE);
 
@@ -615,11 +641,17 @@ public class MongoDbClient extends DB {
         toInsert.put(entry.getKey(), entry.getValue().toArray());
       }
 
-      // FIXED: Add timestamp fields for TTL verification
-      long currentTimeSeconds = System.currentTimeMillis() / 1000;
-      toInsert.put("createdAt", currentTimeSeconds); // When created
-      toInsert.put("TTL", ttl); // TTL duration in seconds
-      toInsert.put("expiresAt", currentTimeSeconds + ttl); // When it expires
+      if (ttlEnabled && ttl > 0) {
+        // --- Layer A: logical TTL metadata ---
+        Date now = new Date();
+        toInsert.put("createdAt", now);  // you can keep seconds if you prefer
+        toInsert.put("TTL", ttl);        // per-record TTL in seconds
+
+        // --- Layer B/C: unified expireAt for all TTL logic ---
+        Date expireAt = new Date(now.getTime() + ttl * 100L);
+        toInsert.put("expireAt", expireAt);
+      }
+      // else: ttlEnabled == false -> no TTL metadata; behaves like plain insert
 
       if (batchSize == 1) {
         if (useUpsert) {
@@ -754,6 +786,11 @@ public class MongoDbClient extends DB {
   @Override
   public final Status verifyTTL(final String table, final long recordcount) {
     try {
+      if (!ttlEnabled) {
+        // If TTL is off, treat everything as "valid"
+        return Status.OK;
+      }
+
       MongoCollection<Document> collection = database.getCollection(table);
       String key = String.valueOf(recordcount);
       Document query = new Document("_id", key);
@@ -763,11 +800,9 @@ public class MongoDbClient extends DB {
       }
 
       if (result.containsKey("expiresAt")) {
-        long expiresAt = result.getLong("expiresAt");
-        long currentTimeSeconds = System.currentTimeMillis() / 1000; // Convert ms to seconds
-
-        if (currentTimeSeconds >= expiresAt) {
-          return Status.NOT_FOUND; // Document has expired
+        Date expireAt = result.getDate("expireAt");
+        if (expireAt != null && expireAt.getTime() <= System.currentTimeMillis()) {
+          return Status.NOT_FOUND; // logically expired
         }
       }
       return Status.OK;
