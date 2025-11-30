@@ -66,5 +66,7 @@ Interested in exploring the research behind this project? Check out the original
 
 ## Code Attribution
 We built off of the following open-source repositories in our modified implementation of GDPRBench:
+- <a href=https://github.com/GDPRbench/GDPRbench> GDPRbench </a>
 - <a href=https://github.com/mongodb/mongo>MongoDB Community Edition </a>
+- <a href=https://github.com/brianfrankcooper/YCSB> Yahoo! Cloud Serving Benchmark </a>
 
