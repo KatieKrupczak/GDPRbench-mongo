@@ -44,6 +44,8 @@ Interested in exploring the research behind this project? Check out the original
   - Lines 408-417: TTL logic.
   - Lines 538-544: Document expiration tracking.
   - Lines 644-654: TTL metadata insertion.
+- scripts/run-all-workloads.sh (MODIFIED):
+  - Lines 197-211: Enable TTL functionality.
 
 #### Section 2.1.3 (Auditing):
 - src/mongodb/src/main/java/com/yahoo/ycsb/db/MongoDbClient.java (MODIFIED):
