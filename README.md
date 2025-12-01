@@ -62,6 +62,7 @@ Interested in exploring the research behind this project? Check out the original
 - scripts/stop-mongo.sh (NEW): Closes down MongoDB.
 - configs/mongod-nolog.yaml (NEW): Config file for MongoDB without audit logging.
 - configs/mongod-log.yaml (NEW): Config file for MongoDB with audit logging.
+- results/ (NEW): Folder containing snapshots and CSV-formatted output, and an Excel file used for plotting the final results
 
 
 ## Code Attribution
