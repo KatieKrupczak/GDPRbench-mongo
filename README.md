@@ -35,7 +35,7 @@ More details about the scripts can be found in scripts/README.md
 
 ## Report Map
 
-#### Section 2.1.1 (Encryption):
+#### Section 2.2.1 (Encryption):
 - .gitignore (MODIFIED):
   - Lines 6-13: Added certificates.
 - certs/openssl-server.cnf (NEW): OpenSSL certificate.
@@ -46,7 +46,7 @@ More details about the scripts can be found in scripts/README.md
 - luks-close.sh (NEW): Unmounts and closes the LUKS encrypted volume.
 - scripts/mongo-luks.key (NEW): MongoDB LUKS key.
 
-#### Section 2.1.2 (Time-To-Live Deletion):
+#### Section 2.2.2 (Time-To-Live Deletion):
 - src/mongodb/src/main/java/com/yahoo/ycsb/db/MongoDbClient.java (MODIFIED):
   - Lines 282-294: ttlEnabled and sweeperEnabled boolean logic.
   - Lines 359-368: Date object tracking.
@@ -56,7 +56,7 @@ More details about the scripts can be found in scripts/README.md
 - scripts/run-all-workloads.sh (NEW):
   - Lines 197-211: Enable TTL functionality.
 
-#### Section 2.1.3 (Auditing):
+#### Section 2.2.3 (Auditing):
 - src/mongodb/src/main/java/com/yahoo/ycsb/db/MongoDbClient.java (MODIFIED):
   - Lines 287-292: Get audit log path.
   - Lines 789-859: Read and write from log path.
