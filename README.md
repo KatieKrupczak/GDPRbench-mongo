@@ -39,13 +39,11 @@ Interested in exploring the research behind this project? Check out the original
 
 #### Section 2.1.2 (Time-To-Live Deletion):
 - src/mongodb/src/main/java/com/yahoo/ycsb/db/MongoDbClient.java (MODIFIED):
-  - Lines 137-164: TTL functionality during cleanup.
-  - Lines 278-285: add automatic cleanup thread and get cleanup interval from properties.
-  - Lines 298-361: start background cleanup thread.
-  - Lines 460-468: Document if query result is expired.
-  - Lines 611-616: Add timestamp fields for TTL verification.
-  - Lines 749-767: Check expiration logic.
-  - Lines 776-792: Logging of TTL.
+  - Lines 282-294: ttlEnabled and sweeperEnabled boolean logic.
+  - Lines 359-368: Date object tracking.
+  - Lines 408-417: TTL logic.
+  - Lines 538-544: Document expiration tracking.
+  - Lines 644-654: TTL metadata insertion.
 
 #### Section 2.1.3 (Auditing):
 - src/mongodb/src/main/java/com/yahoo/ycsb/db/MongoDbClient.java (MODIFIED):
