@@ -1,12 +1,12 @@
 # GDPRbench - MongoDB
 
-The General Data Protection Regulation (GDPR) was introduced in Europe to offer new rights and protections to people concerning their personal data. GDPRbench aimed to benchmark how well a given storage system responded to the common queries of GDPR. In order to do this, the authors [identified](images/gdpr-workloads.png) four key roles in GDPR--customer, controller, processor, and regulator--and composed workloads corresponding to their functionalities. The design of this benchmark was guided by their analysis of GDPR as well as the usage patterns from the real-world.
+The General Data Protection Regulation (GDPR) was introduced in Europe to offer new rights and protections to people concerning their personal data. GDPRbench aimed to benchmark how well a given storage system responded to the common queries of GDPR. In order to do this, the authors [identified](https://github.com/GDPRbench/GDPRbench/blob/master/images/gdpr-workloads.png) four key roles in GDPR--customer, controller, processor, and regulator--and composed workloads corresponding to their functionalities. The design of this benchmark was guided by their analysis of GDPR as well as the usage patterns from the real-world.
 
 We extend GDPRbench by adding GDPR-compliant functionality to MongoDB. This includes support for encryption, time-to-live (TTL) and audit logging. We compare the performance of these modifications to MongoDB with results on Redis from the original GDPRBench. 
 
 ## Design and Implementation
 
-The authors of GDPRbench implement their changes by adapting and extending YCSB. This [figure](images/gdprbench.png) shows the core infrastructure components of YCSB (in gray), and their modifications and extensions (in blue). They create four new workloads, a GDPR-specific workload executor, and implement DB clients (one per storage system). We add code to an open-source version of MongoDB to interface with these components, which we enumerate below. 
+The authors of GDPRbench implement their changes by adapting and extending YCSB. This [figure](https://github.com/GDPRbench/GDPRbench/blob/master/images/gdprbench.png) shows the core infrastructure components of YCSB (in gray), and their modifications and extensions (in blue). They create four new workloads, a GDPR-specific workload executor, and implement DB clients (one per storage system). We add code to an open-source version of MongoDB to interface with these components, which we enumerate below. 
 
 ### Prerequisites and Benchmarking
 To get started with GDPRbench, download or clone this repository. It consists of a fully functional version of YCSB together with all the functionalities of GDPRbench. Please note that you will need [Maven 3](https://maven.apache.org/) to build and use the benchmark.
