@@ -8,21 +8,30 @@ We extend GDPRbench by adding GDPR-compliant functionality to MongoDB. This incl
 
 The authors of GDPRbench implement their changes by adapting and extending YCSB. This [figure](images/gdprbench.png) shows the core infrastructure components of YCSB (in gray), and their modifications and extensions (in blue). They create four new workloads, a GDPR-specific workload executor, and implement DB clients (one per storage system). We add code to an open-source version of MongoDB to interface with these components, which we enumerate below. 
 
-## Benchmarking
-
+### Prerequisites and Benchmarking
 To get started with GDPRbench, download or clone this repository. It consists of a fully functional version of YCSB together with all the functionalities of GDPRbench. Please note that you will need [Maven 3](https://maven.apache.org/) to build and use the benchmark.
 
-```bash
-git clone https://github.com/GDPRbench/GDPRbench.git
-cd GDPRbench/src/
-mvn clean package
-<start redis or postgres>
-configure workloads/gdpr_{controller|customer|processor|regulator}
-./bin/ycsb load redis -s -P workloads/gdpr_controller
-./bin/ycsb run redis -s -P workloads/gdpr_controller
+- MongoDB installed (`brew install mongodb-community@7.0`)
+  - if this doesn't work, first run brew tap `mongodb/brew` then try the above
+- Project built (`cd src && mvn clean package -DskipTests -Dcheckstyle.skip=true -Psource-run`)
+- Cryptsetup (LUKS encryption-at-rest) (`sudo apt install cryptsetup`)
+- OpenSSL (`sudo apt install openssl`)
+
+** macOS does not support LUKS natively.
+This project’s encryption-at-rest feature should be run on Linux.
+
+To further set up encryption, the followinng scripts should be run from the root directory of the repository:
+``` bash
+bash scripts/luks-create.sh
+bash scripts/setup-tls.sh
 ```
 
-Interested in exploring the research behind this project? Check out the original GDPRbench's [website](https://gdprbench.org/).
+And to run all workloads n times (default, n=1), after setting up all of the above, run:
+``` bash
+bash scripts/run-all-workloads.sh [n]
+```
+
+More details about the scripts can be found in scripts/README.md
 
 ## Report Map
 
@@ -44,7 +53,7 @@ Interested in exploring the research behind this project? Check out the original
   - Lines 408-417: TTL logic.
   - Lines 538-544: Document expiration tracking.
   - Lines 644-654: TTL metadata insertion.
-- scripts/run-all-workloads.sh (MODIFIED):
+- scripts/run-all-workloads.sh (NEW):
   - Lines 197-211: Enable TTL functionality.
 
 #### Section 2.1.3 (Auditing):
@@ -68,6 +77,6 @@ Interested in exploring the research behind this project? Check out the original
 ## Code Attribution
 We built off of the following open-source repositories in our modified implementation of GDPRBench:
 - <a href=https://github.com/GDPRbench/GDPRbench> GDPRbench </a>
-- <a href=https://github.com/mongodb/mongo>MongoDB Community Edition </a>
 - <a href=https://github.com/brianfrankcooper/YCSB> Yahoo! Cloud Serving Benchmark </a>
+- <a href=https://github.com/mongodb/mongo>MongoDB Community Edition </a>
 
