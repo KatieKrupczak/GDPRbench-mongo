@@ -20,7 +20,7 @@ To get started with GDPRbench, download or clone this repository. It consists of
 ** macOS does not support LUKS natively.
 This project’s encryption-at-rest feature should be run on Linux.
 
-To further set up encryption, the followinng scripts should be run from the root directory of the repository:
+To further set up encryption, the following scripts should be run from the root directory of the repository:
 ``` bash
 bash scripts/luks-create.sh
 bash scripts/setup-tls.sh
